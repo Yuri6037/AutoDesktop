@@ -1,0 +1,7 @@
+data/com.github.yuri6037.AutoDesktop.desktop.in
+data/com.github.yuri6037.AutoDesktop.appdata.xml.in
+data/com.github.yuri6037.AutoDesktop.gschema.xml
+src/autodesktop-window.ui
+src/main.c
+src/autodesktop-window.c
+
