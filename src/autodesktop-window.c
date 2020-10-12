@@ -99,9 +99,16 @@ static void autodesktop_window_button_icon_clicked(G_GNUC_UNUSED GtkButton *butt
     gtk_widget_destroy(dialog);
 }
 
+/*
+[Desktop Action new-document]
+Name=New Document
+Exec=gedit --new-document
+ */
+
 static void create_desktop_entry(AutodesktopWindow *self, const gchar *name, const gchar *exec)
 {
     g_autofree gchar *path = g_strjoin("/", g_get_home_dir(), ".local", "share", "applications", "test.desktop", NULL);
+    g_autofree gchar *rmcmd = g_strjoin(" ", "rm", path, NULL);
     GKeyFile *file = g_key_file_new();
     GError *err = NULL;
 
@@ -109,15 +116,18 @@ static void create_desktop_entry(AutodesktopWindow *self, const gchar *name, con
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, exec);
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ICON, self->icon_filename);
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NAME, name);
+    g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ACTIONS, "Remove;");
+    g_key_file_set_string(file, "Desktop Action Remove", G_KEY_FILE_DESKTOP_KEY_NAME, "Remove from Launcher");
+    g_key_file_set_string(file, "Desktop Action Remove", G_KEY_FILE_DESKTOP_KEY_EXEC, rmcmd);
     if (!g_key_file_save_to_file(file, path, &err))
     {
-            show_message_box(gtk_message_dialog_new(GTK_WINDOW(self),
-                                                    GTK_DIALOG_MODAL,
-                                                    GTK_MESSAGE_ERROR,
-                                                    GTK_BUTTONS_OK,
-                                                    "An error has occured while saving desktop entry:\n%s\n",
-                                                    err->message));
-            g_error_free(err);
+        show_message_box(gtk_message_dialog_new(GTK_WINDOW(self),
+                                                GTK_DIALOG_MODAL,
+                                                GTK_MESSAGE_ERROR,
+                                                GTK_BUTTONS_OK,
+                                                "An error has occured while saving desktop entry:\n%s\n",
+                                                err->message));
+        g_error_free(err);
     }
     else
         gtk_window_close(GTK_WINDOW(self));
