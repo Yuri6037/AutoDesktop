@@ -17,6 +17,10 @@
  */
 
 #include <glib/gi18n.h>
+#include <glib/gstdio.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "autodesktop-config.h"
 #include "autodesktop-window.h"
 
@@ -33,11 +37,100 @@ struct _AutodesktopWindow
     gchar *icon_filename;
 };
 
+#define PROP_FILENAME 1
+
+static GParamSpec *obj_properties[2] = { NULL, NULL };
+
 G_DEFINE_TYPE(AutodesktopWindow, autodesktop_window, GTK_TYPE_APPLICATION_WINDOW)
 
 static void autodesktop_window_finalize(GObject *obj)
 {
     g_free(AUTODESKTOP_WINDOW(obj)->icon_filename);
+}
+
+static gchar *guess_content_type_read(const gchar *filename)
+{
+    guchar buf[512];
+    int fd;
+    int len;
+
+    fd = g_open(filename, O_RDONLY, 0);
+    if (fd == -1)
+        return (g_strdup("application/octet-stream"));
+    len = read(fd, buf, 512);
+    close(fd);
+    return (g_content_type_guess(filename, buf, len, NULL));
+}
+
+static gchar *guess_content_type(const gchar *filename)
+{
+    gboolean uncertain = FALSE;
+    gchar *data;
+
+    if (g_file_test(filename, G_FILE_TEST_IS_DIR))
+        return (g_strdup("inode/directory"));
+    data = g_content_type_guess(filename, NULL, 0, &uncertain);
+    if (uncertain)
+    {
+        g_free(data);
+        return guess_content_type_read(filename);
+    }
+    else
+        return (data);
+}
+
+static void prepend_set(AutodesktopWindow *self, const gchar *prepend, const gchar *data)
+{
+    g_autofree gchar *tmp = g_strjoin(" ", prepend, data, NULL);
+
+    gtk_entry_set_text(self->desktop_exec, tmp);
+}
+
+static void autodesktop_window_set_property(GObject *obj, guint prop, const GValue *value, GParamSpec *pspec)
+{
+    AutodesktopWindow *self = AUTODESKTOP_WINDOW(obj);
+    const gchar *data;
+    g_autofree gchar *content_type = NULL;
+
+    switch (prop)
+    {
+    case PROP_FILENAME:
+        if (g_value_get_string(value) != NULL)
+        {
+            data = g_value_get_string(value);
+            content_type = guess_content_type(data);
+            if (g_strcmp0(content_type, "application/x-executable") == 0
+                || g_strcmp0(content_type, "application/x-shellscript") == 0
+                || g_strcmp0(content_type, "application/vnd.appimage") == 0)
+                gtk_entry_set_text(self->desktop_exec, data);
+            else if (g_strcmp0(content_type, "inode/directory") == 0)
+                prepend_set(self, "nautilus", data);
+            else if (g_strcmp0(content_type, "text/plain") == 0)
+                prepend_set(self, "gedit", data);
+            else
+                prepend_set(self, "bless", data);
+            g_debug("Init target command: %s", data);
+        }
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop, pspec);
+        break;
+    }
+}
+
+static void autodesktop_window_get_property(GObject *obj, guint prop, GValue *value, GParamSpec *pspec)
+{
+    AutodesktopWindow *self = AUTODESKTOP_WINDOW(obj);
+
+    switch (prop)
+    {
+    case PROP_FILENAME:
+        g_value_set_static_string(value, gtk_entry_get_text(self->desktop_exec));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop, pspec);
+        break;
+    }
 }
 
 static void autodesktop_window_class_init(AutodesktopWindowClass *class)
@@ -52,6 +145,16 @@ static void autodesktop_window_class_init(AutodesktopWindowClass *class)
     gtk_widget_class_bind_template_child(widget_class, AutodesktopWindow, desktop_name);
     gtk_widget_class_bind_template_child(widget_class, AutodesktopWindow, desktop_exec);
     G_OBJECT_CLASS(class)->finalize = autodesktop_window_finalize;
+    G_OBJECT_CLASS(class)->set_property = autodesktop_window_set_property;
+    G_OBJECT_CLASS(class)->get_property = autodesktop_window_get_property;
+    obj_properties[PROP_FILENAME] = g_param_spec_string(
+        "filename",
+        "Filename",
+        "Filename of target executable",
+        NULL,
+        G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE
+    );
+    g_object_class_install_properties(G_OBJECT_CLASS(class), 2, obj_properties);
 }
 
 static void show_message_box(GtkWidget *widget)
@@ -99,22 +202,18 @@ static void autodesktop_window_button_icon_clicked(G_GNUC_UNUSED GtkButton *butt
     gtk_widget_destroy(dialog);
 }
 
-/*
-[Desktop Action new-document]
-Name=New Document
-Exec=gedit --new-document
- */
-
 static void create_desktop_entry(AutodesktopWindow *self, const gchar *name, const gchar *exec)
 {
-    g_autofree gchar *path = g_strjoin("/", g_get_home_dir(), ".local", "share", "applications", "test.desktop", NULL);
-    g_autofree gchar *rmcmd = g_strjoin(" ", "rm", path, NULL);
+    g_autofree gchar *filename = g_strjoin(".", name, "desktop", NULL);
+    g_autofree gchar *path = g_strjoin("/", g_get_home_dir(), ".local", "share", "applications", filename, NULL);
+    g_autofree gchar *rmcmd = g_strjoin("", "rm", " ", "\"", path, "\"", NULL);
     GKeyFile *file = g_key_file_new();
     GError *err = NULL;
 
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_TYPE, "Application");
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, exec);
-    g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ICON, self->icon_filename);
+    if (self->icon_filename != NULL)
+        g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ICON, self->icon_filename);
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NAME, name);
     g_key_file_set_string(file, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ACTIONS, "Remove;");
     g_key_file_set_string(file, "Desktop Action Remove", G_KEY_FILE_DESKTOP_KEY_NAME, "Remove from Launcher");

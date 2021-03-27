@@ -21,7 +21,7 @@
 #include "autodesktop-config.h"
 #include "autodesktop-window.h"
 
-static void on_activate(GtkApplication *app)
+static void on_activate(GtkApplication *app, const gchar **filename)
 {
 	GtkWindow *window;
 
@@ -32,18 +32,19 @@ static void on_activate(GtkApplication *app)
                               "application", app,
                               "default-width", 600,
                               "default-height", 200,
+                              "filename", *filename,
                               NULL);
     //gtk_window_set_position(window, GTK_WIN_POS_CENTER_ALWAYS); //This is bugged under my GTK install so disabled
     gtk_window_present(window);
 }
 
-static gint handle_local_options(G_GNUC_UNUSED GApplication *app, GVariantDict *options)
+static gint handle_local_options(G_GNUC_UNUSED GApplication *app, GVariantDict *options, gchar **filename)
 {
     gchar **filenames;
 
     if (g_variant_dict_lookup(options, G_OPTION_REMAINING, "^a&ay", &filenames))
     {
-        g_variant_dict_insert(options, "filename", "^&ay", filenames[0]);
+        *filename = g_strdup(filenames[0]);
         g_variant_dict_remove(options, G_OPTION_REMAINING);
         return -1;
     }
@@ -53,6 +54,7 @@ static gint handle_local_options(G_GNUC_UNUSED GApplication *app, GVariantDict *
 
 int main(int argc, char *argv[])
 {
+    g_autofree gchar *filename = NULL;
 	g_autoptr(GtkApplication) app = NULL;
     GOptionEntry additional_entries[] = {
         { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, NULL, "Name of file", "<file to create a desktop entry for>" },
@@ -65,8 +67,8 @@ int main(int argc, char *argv[])
 	textdomain(GETTEXT_PACKAGE);
 	app = gtk_application_new("com.github.yuri6037.AutoDesktop", G_APPLICATION_FLAGS_NONE);
     g_application_add_main_option_entries(G_APPLICATION(app), additional_entries);
-	g_signal_connect(app, "handle-local-options", G_CALLBACK(handle_local_options), NULL);
-    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+	g_signal_connect(app, "handle-local-options", G_CALLBACK(handle_local_options), &filename);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), &filename);
 	ret = g_application_run(G_APPLICATION(app), argc, argv);
 	return ret;
 }
